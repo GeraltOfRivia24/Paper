@@ -32,7 +32,7 @@ class Config(object):
     # 1Dconv configs
     conv1_filter_sizes = [3]
     conv1_filter_num = 128
-    conv1_padding = 'VALID'
+    conv1_padding = 'SAME'
     conv2_filter_sizes = [3]
     conv2_filter_num = 64
     conv2_padding = 'VALID'
@@ -43,33 +43,34 @@ class Config(object):
 
     # dense configs
     hidden_size = 128
-    hidden2_size =64
+    hidden2_size = 64
 
     # params
     l2_reg_lambda = 1e-2
-    learning_rate = 2e-3
+    learning_rate = 1e-3
 
     # others
-    batch_size = 128
-    epochs = 20
+    batch_size = 32
+    epochs = 200
     sequence_length = 128
-    sequence_width = 2
+    sequence_width = 1
     label_size = 11
 
     # config
-    batch_show = 20
+    batch_show = 5
     model_save_step = 5
 
 class SignalModModel(object):
     def __init__(self, config, log_path, model_path):
         self.config = config
-        self.add_placeholders()
-        # with tf.device('/cpu:0'):
-        self.outputs = self.add_model(self.inputs)
-        self.pred = tf.argmax(tf.nn.softmax(self.outputs), axis=1)
-        self.loss = self.add_loss_op(self.outputs)
-        self.accu = self.add_accu_op(self.outputs)
-        self.train_op = self.add_train_op(self.loss)
+        with tf.device('/cpu:0'):
+            self.add_placeholders()
+        with tf.device('/gpu:0'):
+            self.outputs = self.add_model(self.inputs)
+            self.pred = tf.argmax(tf.nn.softmax(self.outputs), axis=1)
+            self.loss = self.add_loss_op(self.outputs)
+            self.accu = self.add_accu_op(self.outputs)
+            self.train_op = self.add_train_op(self.loss)
 
         # add summary op
         tf.summary.scalar('accuracy', self.accu)
@@ -87,8 +88,8 @@ class SignalModModel(object):
         # gpu config
         cf = tf.ConfigProto(allow_soft_placement=True, log_device_placement=False)
         # 只占用20%的GPU内存
-        cf.gpu_options.per_process_gpu_memory_fraction = 0.2
-        cf.gpu_options.visible_device_list = '0'
+        cf.gpu_options.per_process_gpu_memory_fraction = 0.4
+        cf.gpu_options.visible_device_list = '7'
 
         # session
         self.sess = tf.Session(config=cf)
@@ -106,8 +107,8 @@ class SignalModModel(object):
                 snr = int(items[2])
                 if snr != 18:
                     continue
-                if label not in (0, 1, 2, 3):
-                    continue
+                # if label not in (0, 1, 2, 3, 4, 5):
+                #     continue
                 label = one_hot(label, self.config.label_size)
                 x.append(signal)
                 y.append(label)
@@ -125,15 +126,16 @@ class SignalModModel(object):
         with open(data_path, 'rb') as fr:
             batch_x = list()
             batch_y = list()
-            for i, line in enumerate(fr):
+            i = 0
+            for _, line in enumerate(fr):
                 items = line.strip().split('\t')
                 signal = json.loads(items[0])
                 label = int(items[1])
                 snr = int(items[2])
                 if snr != 18:
                     continue
-                if label not in (0, 1, 2, 3):
-                    continue
+                # if label not in (0, 1, 2, 3, 4, 5):
+                #     continue
                 label = one_hot(label, self.config.label_size)
                 batch_x.append(signal)
                 batch_y.append(label)
@@ -143,6 +145,7 @@ class SignalModModel(object):
                     del batch_y
                     batch_x = list()
                     batch_y = list()
+                i += 1
             if len(batch_x) != 0 and len(batch_y) != 0:
                 yield batch_x, batch_y
 
@@ -168,7 +171,7 @@ class SignalModModel(object):
             with tf.variable_scope('filter{}'.format(filter_size)):
                 # 第一层的filter的W和b
                 conv1_W = tf.get_variable('conv1_W',
-                    shape=[filter_size, 1, 1, self.config.conv1_filter_num], initializer=xavier_initializer())
+                    shape=[filter_size, 1, 1, self.config.conv1_filter_num], initializer=tf.truncated_normal_initializer(0., 1))
                 conv1_b = tf.get_variable('conv1_b',
                     initializer=tf.constant(0.1, shape=[self.config.conv1_filter_num]))
                 # 卷积
@@ -176,31 +179,31 @@ class SignalModModel(object):
                     (tf.nn.conv2d(
                     inputs, conv1_W, [1, 1, 1, 1], padding=self.config.conv1_padding) + conv1_b))
                 # 池化
-                pool1_b = tf.get_variable('pool1_b',
-                    initializer=tf.constant(0.1, shape=[self.config.conv1_filter_num]))
-                pool1_out = tf.nn.max_pool(conv1_out,
-                    [1, self.config.conv1_pool_sizes[i], 1, 1], [1, self.config.conv1_pool_sizes[i], 1, 1],
-                    padding=self.config.conv1_padding)
-                pool1_out = tf.nn.tanh(pool1_out + pool1_b)
+                # pool1_b = tf.get_variable('pool1_b',
+                #     initializer=tf.constant(0.1, shape=[self.config.conv1_filter_num]))
+                # pool1_out = tf.nn.max_pool(conv1_out,
+                #     [1, self.config.conv1_pool_sizes[i], 1, 1], [1, self.config.conv1_pool_sizes[i], 1, 1],
+                #     padding=self.config.conv1_padding)
+                # pool1_out = tf.nn.relu(pool1_out + pool1_b)
 
-                dropout_pool1_out = tf.nn.dropout(pool1_out, self.keep_prob)
+                # dropout_pool1_out = tf.nn.dropout(pool1_out, self.keep_prob)
 
                 # 第一层的filter的W和b
                 conv2_W = tf.get_variable('conv2_W',
-                    shape=[self.config.conv2_filter_sizes[i], self.config.sequence_width, conv1_out.get_shape()[3], self.config.conv2_filter_num], initializer=xavier_initializer())
+                    shape=[self.config.conv2_filter_sizes[i], self.config.sequence_width, conv1_out.get_shape()[3], self.config.conv2_filter_num], initializer=tf.truncated_normal_initializer(0., 1))
                 conv2_b = tf.get_variable('conv2_b',
                     initializer=tf.constant(0.1, shape=[self.config.conv2_filter_num]))
                 # 卷积
                 conv2_out = tf.nn.relu(
                     (tf.nn.conv2d(
-                    dropout_pool1_out, conv2_W, [1, 1, 1, 1], padding=self.config.conv2_padding) + conv2_b))
+                    conv1_out, conv2_W, [1, 1, 1, 1], padding=self.config.conv2_padding) + conv2_b))
                 # 池化
                 pool2_b = tf.get_variable('pool2_b',
                     initializer=tf.constant(0.1, shape=[self.config.conv2_filter_num]))
                 pool2_out = tf.nn.max_pool(conv2_out,
                     [1, self.config.conv2_pool_sizes[i], 1, 1], [1, self.config.conv2_pool_sizes[i], 1, 1],
                     padding=self.config.conv1_padding)
-                pool2_out = tf.nn.tanh(pool2_out + pool2_b)
+                pool2_out = tf.nn.relu(pool2_out + pool2_b)
                 dropout_pool2_out = tf.nn.dropout(pool2_out, self.keep_prob)
 
                 outputs.append(dropout_pool2_out)
@@ -221,14 +224,15 @@ class SignalModModel(object):
         FC1_W = tf.get_variable('FC_W', shape=[real_outputs.get_shape()[1], self.config.hidden_size],
                 initializer=xavier_initializer())
         FC1_b = tf.Variable(initial_value=tf.zeros([self.config.hidden_size]), name='FC_b')
-        final_outputs = tf.matmul(real_outputs, FC1_W) + FC1_b
+        final_outputs = tf.nn.relu(tf.matmul(real_outputs, FC1_W) + FC1_b)
         tf.add_to_collection('total_loss', 0.5 * self.config.l2_reg_lambda * tf.nn.l2_loss(FC1_W))
 
         # 加入softmax层输出
         FC2_W = tf.get_variable('FC2_W', shape=[self.config.hidden_size, self.config.hidden2_size],
                                 initializer=xavier_initializer())
         FC2_b = tf.Variable(initial_value=tf.zeros([self.config.hidden2_size]), name='FC2_b')
-        final_outputs = tf.matmul(final_outputs, FC2_W) + FC2_b
+        final_outputs = tf.nn.relu(tf.matmul(final_outputs, FC2_W) + FC2_b)
+        tf.add_to_collection('total_loss', 0.5 * self.config.l2_reg_lambda * tf.nn.l2_loss(FC2_W))
 
         # 加入softmax层输出
         sm_W = tf.get_variable('sm_W', shape=[self.config.hidden2_size, self.config.label_size],
@@ -249,7 +253,9 @@ class SignalModModel(object):
 
 
     def add_accu_op(self, outputs):
-        accu = tf.argmax(tf.nn.softmax(outputs), axis=1)
+        accu = tf.nn.softmax(outputs)
+        self.prob = accu
+        accu = tf.argmax(accu, axis=1)
         accu = tf.cast(tf.equal(accu, tf.argmax(self.labels, axis=1)), tf.float32)
         accu = tf.reduce_mean(accu)
         return accu
@@ -260,7 +266,9 @@ class SignalModModel(object):
         with tf.name_scope('train_op'):
             # 记录训练步骤
             self.global_step = tf.Variable(0, name='global_step', trainable=False)
-            opt = tf.train.AdamOptimizer(self.config.learning_rate)
+            # opt = tf.train.AdamOptimizer(self.config.learning_rate)
+            opt = tf.train.RMSPropOptimizer(self.config.learning_rate)
+            # opt = tf.train.AdadeltaOptimizer(self.config.learning_rate)
             train_op = opt.minimize(loss, self.global_step)
             return train_op
 
@@ -280,9 +288,9 @@ class SignalModModel(object):
         total_loss = 0.
         total_acc = 0.
         for i, (batch_x, batch_y) in enumerate(self.data_iterator(datapath)):
-            _, loss, acc, summary = self.sess.run([self.train_op, self.loss,
-                        self.accu, self.merged_summary_op],
-                        feed_dict={self.inputs:batch_x, self.labels:batch_y, self.keep_prob:0.5})
+            _, loss, acc, pred, summary = self.sess.run([self.train_op, self.loss,
+                        self.accu, self.pred, self.merged_summary_op],
+                        feed_dict={self.inputs:batch_x, self.labels:batch_y, self.keep_prob:0.6})
             total_batch += 1
             self.summary_writer.add_summary(summary, (epoch_no - 1) * total_batch + i)
             total_loss += loss
@@ -311,17 +319,18 @@ class SignalModModel(object):
             test_data, test_labels = self.load_test_data(test_datapath)
         for i in xrange(self.config.epochs):
             self.run_epoch(i + 1, datapath)
-            if (i + 1) % self.config.model_save_step == 0:
-                save_path = self.saver.save(self.sess, self.model_path)
-                print("Model saved in file: %s" % save_path)
+            # if (i + 1) % self.config.model_save_step == 0:
+            #     save_path = self.saver.save(self.sess, self.model_path)
+            #     print("Model saved in file: %s" % save_path)
             if test_data is not None and test_labels is not None:
                 self.predict(test_data, test_labels)
 
 
     def predict(self, data, labels=None):
         if labels is not None:
-            loss, acc, pred = self.sess.run([self.loss, self.accu, self.pred],
+            loss, acc, pred, prob = self.sess.run([self.loss, self.accu, self.pred, self.prob],
                     feed_dict={self.inputs:data, self.labels:labels, self.keep_prob:1})
+            print prob
             print '***test***\nloss : {}, accu : {}'.format(loss, acc)
             print confusion_matrix(np.argmax(labels, axis=1), pred)
 
@@ -329,5 +338,5 @@ class SignalModModel(object):
 
 
 if __name__ == '__main__':
-    model = SignalModModel(Config(), '../log_{0}'.format(datetime.strftime(datetime.now(), '%Y%m%d%H')), '../model/model_{0}.pkg'.format(datetime.strftime(datetime.now(), '%Y%m%d%H')))
-    model.fit(datapath='../rml_data/RML2016.10a_dict.dat.train', test_datapath='../rml_data/RML2016.10a_dict.dat.test')
+    model = SignalModModel(Config(), '../log', '../model/model_{0}.pkg'.format(datetime.strftime(datetime.now(), '%Y%m%d%H')))
+    model.fit(datapath='../rml_data/RML2016.10a_dict_real.dat.train', test_datapath='../rml_data/RML2016.10a_dict_real.dat.test')

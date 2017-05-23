@@ -1,7 +1,6 @@
 import sys
 import pickle
 import numpy as np
-from matplotlib import pyplot as plt
 from sklearn.model_selection import train_test_split
 import json
 
@@ -25,6 +24,7 @@ def getRealSignal(filepath, savepath):
         array = pickle.load(fr)
         for each_type in array:
             array[each_type] = array[each_type][:,0,:]
+            array[each_type] = np.expand_dims(array[each_type], 1)
         pickle.dump(array, fw)
 
 
@@ -33,6 +33,7 @@ def mixSignal(filepath, savepath):
 
 
 def drawSignal(filepath):
+    from matplotlib import pyplot as plt
     with open(filepath, 'rb') as fr:
         pre_snr = None
         pre_label = None
@@ -87,7 +88,8 @@ def splitSignal(filepath):
 
 if __name__ == '__main__':
     # rmlParser('../rml_data/RML2016.10a_dict.dat')
-    # getRealSignal('../rml_data/RML2016.10a_dict.dat', '../rml_data/RML2016.10a_dict_real.dat')
+    getRealSignal('../rml_data/RML2016.10a_dict.dat', '../rml_data/RML2016.10a_dict_real.dat')
+    splitSignal('../rml_data/RML2016.10a_dict_real.dat')
     # mixSignal('../rml_data/RML2016.10a_dict_real.dat', '../rml_data/dict_mixSignal.dat')
-    splitSignal('../rml_data/RML2016.10a_dict.dat')
+    # splitSignal('../rml_data/RML2016.10a_dict.dat')
     # drawSignal('../rml_data/RML2016.10a_dict.dat.train')
